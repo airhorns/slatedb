@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_types, clippy::disallowed_methods)]
+
 use std::sync::Arc;
 
 use object_store::{memory::InMemory, ObjectStore};
