@@ -182,7 +182,7 @@ impl DbInner {
             settings.flush_interval,
         ));
 
-        let txn_manager = Arc::new(TransactionManager::new(rand.clone()));
+        let txn_manager = Arc::new(TransactionManager::new(rand.clone(), oracle.clone()));
 
         let db_inner = Self {
             state,
@@ -854,8 +854,7 @@ impl Db {
     /// ```
     pub async fn snapshot(&self) -> Result<Arc<DbSnapshot>, crate::Error> {
         self.inner.status()?;
-        let seq = self.inner.oracle.last_committed_seq();
-        let snapshot = DbSnapshot::new(self.inner.clone(), self.inner.txn_manager.clone(), seq);
+        let snapshot = DbSnapshot::new(self.inner.clone(), self.inner.txn_manager.clone(), None);
         Ok(snapshot)
     }
 
@@ -1564,11 +1563,9 @@ impl Db {
         isolation_level: IsolationLevel,
     ) -> Result<DbTransaction, crate::Error> {
         self.inner.status()?;
-        let seq = self.inner.oracle.last_committed_seq();
         let txn = DbTransaction::new(
             self.inner.clone(),
             self.inner.txn_manager.clone(),
-            seq,
             isolation_level,
         );
         Ok(txn)

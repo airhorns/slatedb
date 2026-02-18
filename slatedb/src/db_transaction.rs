@@ -75,10 +75,9 @@ impl DbTransaction {
     pub(crate) fn new(
         db_inner: Arc<DbInner>,
         txn_manager: Arc<TransactionManager>,
-        seq: u64,
         isolation_level: IsolationLevel,
     ) -> Self {
-        let txn_id = txn_manager.new_txn(seq, false); // false = not read-only
+        let (txn_id, seq) = txn_manager.new_transaction();
 
         Self {
             txn_id,
