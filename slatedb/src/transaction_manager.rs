@@ -437,22 +437,13 @@ impl TransactionManagerInner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::oracle::{DbReaderOracle, Oracle};
+    use crate::oracle::DbReaderOracle;
     use crate::rand::DbRand;
     use crate::utils::MonotonicSeq;
     use bytes::Bytes;
     use parking_lot::Mutex;
     use rstest::rstest;
     use std::collections::HashSet;
-
-    fn new_txn_manager(db_rand: Arc<DbRand>) -> TransactionManager {
-        let oracle: Arc<dyn Oracle> = Arc::new(DbReaderOracle::new(MonotonicSeq::new(0)));
-        TransactionManager::new(db_rand, oracle)
-    }
-
-    fn new_test_txn(txn_manager: &TransactionManager, seq: u64, read_only: bool) -> Uuid {
-        txn_manager.new_txn_with_id(seq, read_only, Uuid::new_v4())
-    }
 
     struct CheckConflictTestCase {
         name: &'static str,
@@ -502,10 +493,11 @@ mod tests {
     #[test]
     fn test_drop_txn_removes_active_transaction() {
         let db_rand = Arc::new(DbRand::new(0));
-        let txn_manager = new_txn_manager(db_rand);
+        let oracle = Arc::new(DbReaderOracle::new(MonotonicSeq::new(0)));
+        let txn_manager = TransactionManager::new(db_rand, oracle);
 
         // Create a transaction
-        let txn_id = new_test_txn(&txn_manager, 100, false);
+        let txn_id = txn_manager.new_txn_with_id(100, false, Uuid::new_v4());
 
         // Verify it exists in active transactions
         assert!(txn_manager.inner.read().active_txns.contains_key(&txn_id));
@@ -520,24 +512,26 @@ mod tests {
     #[test]
     fn test_drop_txn_nonexistent_transaction_safe() {
         let db_rand = Arc::new(DbRand::new(0));
-        let txn_manager = new_txn_manager(db_rand);
+        let oracle = Arc::new(DbReaderOracle::new(MonotonicSeq::new(0)));
+        let txn_manager = TransactionManager::new(db_rand, oracle);
 
         // Try to drop a non-existent transaction - should not panic
         let fake_id = Uuid::new_v4();
         txn_manager.drop_txn(&fake_id);
 
         // Should still be able to create new transactions
-        let txn_id = new_test_txn(&txn_manager, 100, false);
+        let txn_id = txn_manager.new_txn_with_id(100, false, Uuid::new_v4());
         assert!(txn_manager.inner.read().active_txns.contains_key(&txn_id));
     }
 
     #[test]
     fn test_drop_txn_triggers_garbage_collection() {
         let db_rand = Arc::new(DbRand::new(0));
-        let txn_manager = new_txn_manager(db_rand);
+        let oracle = Arc::new(DbReaderOracle::new(MonotonicSeq::new(0)));
+        let txn_manager = TransactionManager::new(db_rand, oracle);
 
         // Create an active transaction first to ensure recent_committed_txns tracking
-        let txn_id = new_test_txn(&txn_manager, 100, false);
+        let txn_id = txn_manager.new_txn_with_id(100, false, Uuid::new_v4());
 
         // Create and commit a transaction to populate recent_committed_txns
         let keys: HashSet<Bytes> = ["key1"].into_iter().map(Bytes::from).collect();
@@ -689,7 +683,8 @@ mod tests {
     })]
     fn test_check_conflict_table_driven(#[case] case: CheckConflictTestCase) {
         let db_rand = Arc::new(DbRand::new(0));
-        let txn_manager = new_txn_manager(db_rand);
+        let oracle = Arc::new(DbReaderOracle::new(MonotonicSeq::new(0)));
+        let txn_manager = TransactionManager::new(db_rand, oracle);
 
         // Set up recent_committed_txns directly
         {
@@ -746,11 +741,12 @@ mod tests {
     })]
     fn test_min_active_seq_table_driven(#[case] case: MinActiveSeqTestCase) {
         let db_rand = Arc::new(DbRand::new(0));
-        let txn_manager = new_txn_manager(db_rand);
+        let oracle = Arc::new(DbReaderOracle::new(MonotonicSeq::new(0)));
+        let txn_manager = TransactionManager::new(db_rand, oracle);
 
         // Create transactions according to the test case
         for (seq_no, read_only) in case.transactions {
-            let _txn_id = new_test_txn(&txn_manager, seq_no, read_only);
+            let _txn_id = txn_manager.new_txn_with_id(seq_no, read_only, Uuid::new_v4());
         }
 
         assert_eq!(
@@ -774,10 +770,10 @@ mod tests {
         name: "track committed transaction with valid id",
         setup: Box::new(|txn_manager| {
             // Create a transaction
-            let txn_id = new_test_txn(&txn_manager, 100, false);
+            let txn_id = txn_manager.new_txn_with_id(100, false, Uuid::new_v4());
 
             // Create another active transaction to ensure recent_committed_txns is tracked
-            let _other_txn = new_test_txn(&txn_manager, 200, false);
+            let _other_txn = txn_manager.new_txn_with_id(200, false, Uuid::new_v4());
 
             // Track committed transaction
             let keys: HashSet<Bytes> = ["key1", "key2"].into_iter().map(Bytes::from).collect();
@@ -799,7 +795,7 @@ mod tests {
         name: "track committed transaction with nonexistent id",
         setup: Box::new(|txn_manager| {
             // Create an active transaction to ensure recent_committed_txns would be tracked
-            let _active_txn = new_test_txn(&txn_manager, 100, false);
+            let _active_txn = txn_manager.new_txn_with_id(100, false, Uuid::new_v4());
 
             // Try to track a non-existent transaction
             let fake_id = Uuid::new_v4();
@@ -814,8 +810,8 @@ mod tests {
         name: "no tracking when only readonly transactions active",
         setup: Box::new(|txn_manager| {
             // Create a transaction and a readonly transaction
-            let txn_id = new_test_txn(&txn_manager, 100, false);
-            let _readonly_txn = new_test_txn(&txn_manager, 200, true);
+            let txn_id = txn_manager.new_txn_with_id(100, false, Uuid::new_v4());
+            let _readonly_txn = txn_manager.new_txn_with_id(200, true, Uuid::new_v4());
 
             // Drop the transaction first so that after removal, only readonly remains
             txn_manager.drop_txn(&txn_id);
@@ -832,7 +828,7 @@ mod tests {
         name: "track without id creates record",
         setup: Box::new(|txn_manager| {
             // Create an active write transaction first to enable tracking
-            let _active_txn = new_test_txn(&txn_manager, 50, false);
+            let _active_txn = txn_manager.new_txn_with_id(50, false, Uuid::new_v4());
             // Track without transaction ID (non-transactional write)
             let keys: HashSet<Bytes> = ["key1", "key2"].into_iter().map(Bytes::from).collect();
             txn_manager.track_recent_committed_write_batch(&keys, 100);
@@ -852,10 +848,10 @@ mod tests {
         name: "merges conflict keys from existing transaction",
         setup: Box::new(|txn_manager| {
             // Create a transaction with some conflict keys already tracked
-            let txn_id = new_test_txn(&txn_manager, 100, false);
+            let txn_id = txn_manager.new_txn_with_id(100, false, Uuid::new_v4());
 
             // Create another active transaction to ensure tracking happens
-            let _other_txn = new_test_txn(&txn_manager, 200, false);
+            let _other_txn = txn_manager.new_txn_with_id(200, false, Uuid::new_v4());
 
             // Add some keys to the transaction's conflict_keys before committing
             {
@@ -884,7 +880,8 @@ mod tests {
         #[case] test_case: TrackRecentCommittedTxnTestCase,
     ) {
         let db_rand = Arc::new(DbRand::new(0));
-        let mut txn_manager = new_txn_manager(db_rand);
+        let oracle = Arc::new(DbReaderOracle::new(MonotonicSeq::new(0)));
+        let mut txn_manager = TransactionManager::new(db_rand, oracle);
 
         // Run the setup
         (test_case.setup)(&mut txn_manager);
@@ -944,10 +941,11 @@ mod tests {
     #[test]
     fn test_recycle_recent_committed_txns_filters_by_min_seq() {
         let db_rand = Arc::new(DbRand::new(0));
-        let txn_manager = new_txn_manager(db_rand);
+        let oracle = Arc::new(DbReaderOracle::new(MonotonicSeq::new(0)));
+        let txn_manager = TransactionManager::new(db_rand, oracle);
 
         // Create an active write transaction first to enable tracking
-        let active_txn1 = new_test_txn(&txn_manager, 120, false);
+        let active_txn1 = txn_manager.new_txn_with_id(120, false, Uuid::new_v4());
 
         // Create some committed transactions first
         let keys1: HashSet<Bytes> = ["key1"].into_iter().map(Bytes::from).collect();
@@ -974,10 +972,11 @@ mod tests {
     #[test]
     fn test_recycle_recent_committed_txns_clears_all_when_no_active_writers() {
         let db_rand = Arc::new(DbRand::new(0));
-        let txn_manager = new_txn_manager(db_rand);
+        let oracle = Arc::new(DbReaderOracle::new(MonotonicSeq::new(0)));
+        let txn_manager = TransactionManager::new(db_rand, oracle);
 
         // Create a write transaction first to enable tracking
-        let txn_id = new_test_txn(&txn_manager, 300, false);
+        let txn_id = txn_manager.new_txn_with_id(300, false, Uuid::new_v4());
 
         // Add some committed transactions
         let keys: HashSet<Bytes> = ["key1", "key2"].into_iter().map(Bytes::from).collect();
@@ -997,11 +996,12 @@ mod tests {
     #[test]
     fn test_recycle_recent_committed_txns_boundary_condition_equal_seq() {
         let db_rand = Arc::new(DbRand::new(0));
-        let txn_manager = new_txn_manager(db_rand);
+        let oracle = Arc::new(DbReaderOracle::new(MonotonicSeq::new(0)));
+        let txn_manager = TransactionManager::new(db_rand, oracle);
 
         // Create active write transactions first to enable tracking
-        let _active_txn1 = new_test_txn(&txn_manager, 100, false); // This sets min to 100
-        let active_txn2 = new_test_txn(&txn_manager, 200, false); // Remove this later
+        let _active_txn1 = txn_manager.new_txn_with_id(100, false, Uuid::new_v4()); // This sets min to 100
+        let active_txn2 = txn_manager.new_txn_with_id(200, false, Uuid::new_v4()); // Remove this later
 
         // Create committed transactions with seq values around the boundary
         let keys: HashSet<Bytes> = ["key1"].into_iter().map(Bytes::from).collect();
@@ -1028,7 +1028,8 @@ mod tests {
     #[test]
     fn test_recycle_recent_committed_txns_handles_none_committed_seq() {
         let db_rand = Arc::new(DbRand::new(0));
-        let txn_manager = new_txn_manager(db_rand);
+        let oracle = Arc::new(DbReaderOracle::new(MonotonicSeq::new(0)));
+        let txn_manager = TransactionManager::new(db_rand, oracle);
 
         // Manually create a transaction state with None committed_seq (edge case)
         {
@@ -1048,8 +1049,8 @@ mod tests {
         txn_manager.track_recent_committed_write_batch(&keys, 100);
 
         // Create active transactions and trigger garbage collection
-        let _active_txn1 = new_test_txn(&txn_manager, 150, false); // This sets min to 150
-        let active_txn2 = new_test_txn(&txn_manager, 200, false);
+        let _active_txn1 = txn_manager.new_txn_with_id(150, false, Uuid::new_v4()); // This sets min to 150
+        let active_txn2 = txn_manager.new_txn_with_id(200, false, Uuid::new_v4());
 
         txn_manager.drop_txn(&active_txn2);
 
@@ -1067,10 +1068,11 @@ mod tests {
     #[test]
     fn test_transaction_lifecycle_complete_flow() {
         let db_rand = Arc::new(DbRand::new(0));
-        let txn_manager = new_txn_manager(db_rand);
+        let oracle = Arc::new(DbReaderOracle::new(MonotonicSeq::new(0)));
+        let txn_manager = TransactionManager::new(db_rand, oracle);
 
         // Step 1: Create a transaction
-        let txn_id = new_test_txn(&txn_manager, 100, false);
+        let txn_id = txn_manager.new_txn_with_id(100, false, Uuid::new_v4());
         assert_eq!(txn_manager.min_active_seq(), Some(100));
 
         // Step 2: Simulate conflict detection during transaction
@@ -1080,7 +1082,7 @@ mod tests {
         assert!(!has_conflict); // No conflicts initially
 
         // Step 3: Create another transaction that will commit first
-        let other_txn = new_test_txn(&txn_manager, 50, false);
+        let other_txn = txn_manager.new_txn_with_id(50, false, Uuid::new_v4());
         let other_keys: HashSet<Bytes> = ["key1", "key3"].into_iter().map(Bytes::from).collect();
 
         // Step 4: Commit the other transaction
@@ -1106,16 +1108,17 @@ mod tests {
     #[test]
     fn test_concurrent_transactions_conflict_detection() {
         let db_rand = Arc::new(DbRand::new(0));
-        let txn_manager = new_txn_manager(db_rand);
+        let oracle = Arc::new(DbReaderOracle::new(MonotonicSeq::new(0)));
+        let txn_manager = TransactionManager::new(db_rand, oracle);
 
         // Create three concurrent transactions
         let keys_a: HashSet<Bytes> = ["keyA"].into_iter().map(Bytes::from).collect();
         let keys_b: HashSet<Bytes> = ["keyB"].into_iter().map(Bytes::from).collect();
         let keys_ab: HashSet<Bytes> = ["keyA", "keyB"].into_iter().map(Bytes::from).collect();
 
-        let txn1 = new_test_txn(&txn_manager, 100, false); // T1 starts at seq 100
-        let txn2 = new_test_txn(&txn_manager, 110, false); // T2 starts at seq 110
-        let txn3 = new_test_txn(&txn_manager, 120, false); // T3 starts at seq 120
+        let txn1 = txn_manager.new_txn_with_id(100, false, Uuid::new_v4()); // T1 starts at seq 100
+        let txn2 = txn_manager.new_txn_with_id(110, false, Uuid::new_v4()); // T2 starts at seq 110
+        let txn3 = txn_manager.new_txn_with_id(120, false, Uuid::new_v4()); // T3 starts at seq 120
         txn_manager.track_write_keys(&txn1, &keys_a);
         txn_manager.track_write_keys(&txn2, &keys_b);
         txn_manager.track_write_keys(&txn3, &keys_ab);
@@ -1150,12 +1153,13 @@ mod tests {
     #[test]
     fn test_garbage_collection_timing_with_multiple_operations() {
         let db_rand = Arc::new(DbRand::new(0));
-        let txn_manager = new_txn_manager(db_rand);
+        let oracle = Arc::new(DbReaderOracle::new(MonotonicSeq::new(0)));
+        let txn_manager = TransactionManager::new(db_rand, oracle);
 
         // Create active transactions first
-        let long_txn = new_test_txn(&txn_manager, 100, false); // Long-running transaction
-        let short_txn1 = new_test_txn(&txn_manager, 150, false); // Short transaction 1
-        let short_txn2 = new_test_txn(&txn_manager, 200, false); // Short transaction 2
+        let long_txn = txn_manager.new_txn_with_id(100, false, Uuid::new_v4()); // Long-running transaction
+        let short_txn1 = txn_manager.new_txn_with_id(150, false, Uuid::new_v4()); // Short transaction 1
+        let short_txn2 = txn_manager.new_txn_with_id(200, false, Uuid::new_v4()); // Short transaction 2
 
         // Create some old committed transactions (now they will be tracked since we have active txns)
         let keys1: HashSet<Bytes> = ["old_key1"].into_iter().map(Bytes::from).collect();
@@ -1187,13 +1191,14 @@ mod tests {
     #[test]
     fn test_readonly_vs_write_transaction_interactions() {
         let db_rand = Arc::new(DbRand::new(0));
-        let txn_manager = new_txn_manager(db_rand);
+        let oracle = Arc::new(DbReaderOracle::new(MonotonicSeq::new(0)));
+        let txn_manager = TransactionManager::new(db_rand, oracle);
 
         // Create mixed read-only and write transactions
-        let readonly_txn1 = new_test_txn(&txn_manager, 50, true); // Read-only at seq 50
-        let write_txn1 = new_test_txn(&txn_manager, 100, false); // Write at seq 100
-        let _readonly_txn2 = new_test_txn(&txn_manager, 150, true); // Read-only at seq 150
-        let write_txn2 = new_test_txn(&txn_manager, 200, false); // Write at seq 200
+        let readonly_txn1 = txn_manager.new_txn_with_id(50, true, Uuid::new_v4()); // Read-only at seq 50
+        let write_txn1 = txn_manager.new_txn_with_id(100, false, Uuid::new_v4()); // Write at seq 100
+        let _readonly_txn2 = txn_manager.new_txn_with_id(150, true, Uuid::new_v4()); // Read-only at seq 150
+        let write_txn2 = txn_manager.new_txn_with_id(200, false, Uuid::new_v4()); // Write at seq 200
 
         // min_active_seq should include all transactions (read-only and write)
         assert_eq!(txn_manager.min_active_seq(), Some(50));
@@ -1233,16 +1238,17 @@ mod tests {
     #[test]
     fn test_ssi_phantom_read_conflict_on_range() {
         let db_rand = Arc::new(DbRand::new(0));
-        let txn_manager = new_txn_manager(db_rand);
+        let oracle = Arc::new(DbReaderOracle::new(MonotonicSeq::new(0)));
+        let txn_manager = TransactionManager::new(db_rand, oracle);
 
         // Reader transaction under SSI that scans a key range
-        let reader_txn = new_test_txn(&txn_manager, 100, true);
+        let reader_txn = txn_manager.new_txn_with_id(100, true, Uuid::new_v4());
 
         // Keep a dummy write txn active so commits are tracked in recent_committed_txns
-        let _active_writer_guard = new_test_txn(&txn_manager, 200, false);
+        let _active_writer_guard = txn_manager.new_txn_with_id(200, false, Uuid::new_v4());
 
         // A separate writer that will commit a key inside the reader's scanned range
-        let writer_txn = new_test_txn(&txn_manager, 60, false);
+        let writer_txn = txn_manager.new_txn_with_id(60, false, Uuid::new_v4());
         let writer_keys: HashSet<Bytes> = ["foo5"].into_iter().map(Bytes::from).collect();
         txn_manager.track_write_keys(&writer_txn, &writer_keys);
         txn_manager.track_recent_committed_txn(&writer_txn, 120);
@@ -1456,7 +1462,8 @@ mod tests {
         #[test]
         fn prop_inv_disjoint_active_and_committed_sets(ops in operation_sequence_strategy()) {
             let db_rand = Arc::new(DbRand::new(0));
-            let txn_manager = new_txn_manager(db_rand);
+            let oracle = Arc::new(DbReaderOracle::new(MonotonicSeq::new(0)));
+            let txn_manager = TransactionManager::new(db_rand, oracle);
             let mut exec_state = ExecutionState::new();
 
             for op in ops {
@@ -1485,7 +1492,8 @@ mod tests {
         #[test]
         fn prop_all_write_without_conflict_should_be_committed(ops in operation_sequence_strategy()) {
             let db_rand = Arc::new(DbRand::new(0));
-            let txn_manager = new_txn_manager(db_rand);
+            let oracle = Arc::new(DbReaderOracle::new(MonotonicSeq::new(0)));
+            let txn_manager = TransactionManager::new(db_rand, oracle);
             let mut exec_state = ExecutionState::new();
 
             for op in ops {
@@ -1500,7 +1508,8 @@ mod tests {
         #[test]
         fn prop_inv_min_active_seq_correctness(ops in operation_sequence_strategy()) {
             let db_rand = Arc::new(DbRand::new(0));
-            let txn_manager = new_txn_manager(db_rand);
+            let oracle = Arc::new(DbReaderOracle::new(MonotonicSeq::new(0)));
+            let txn_manager = TransactionManager::new(db_rand, oracle);
             let mut exec_state = ExecutionState::new();
 
             for op in ops {
@@ -1532,7 +1541,8 @@ mod tests {
         #[test]
         fn prop_inv_garbage_collection_correctness(ops in operation_sequence_strategy()) {
             let db_rand = Arc::new(DbRand::new(0));
-            let txn_manager = new_txn_manager(db_rand);
+            let oracle = Arc::new(DbReaderOracle::new(MonotonicSeq::new(0)));
+            let txn_manager = TransactionManager::new(db_rand, oracle);
             let mut exec_state = ExecutionState::new();
 
             for op in ops {
@@ -1565,7 +1575,8 @@ mod tests {
         #[test]
         fn prop_inv_ssi_read_write_conflict_detection(ops in operation_sequence_strategy()) {
             let db_rand = Arc::new(DbRand::new(0));
-            let txn_manager = new_txn_manager(db_rand);
+            let oracle = Arc::new(DbReaderOracle::new(MonotonicSeq::new(0)));
+            let txn_manager = TransactionManager::new(db_rand, oracle);
             let mut exec_state = ExecutionState::new();
 
             for op in ops {
