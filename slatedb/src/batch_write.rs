@@ -188,6 +188,15 @@ impl DbInner {
                 .track_recent_committed_write_batch(&write_keys, commit_seq);
         }
 
+        // insert a fail point for easier to test the case where the transaction is committed but
+        // the last_committed_seq is not updated. this is useful for testing the case where the
+        // transaction is dropped and another transaction is created with the same sequence number.
+        fail_point!(
+            Arc::clone(&self.fp_registry),
+            "write-batch-post-commit",
+            |_| { Err(SlateDBError::from(std::io::Error::other("oops"))) }
+        );
+
         // update the last_committed_seq, so the writes will be visible to the readers.
         self.oracle.last_committed_seq.store(commit_seq);
         self.record_memtable_sequence(commit_seq);

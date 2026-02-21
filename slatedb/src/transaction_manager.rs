@@ -20,6 +20,7 @@ pub enum IsolationLevel {
     SerializableSnapshot,
 }
 
+#[derive(Debug)]
 pub(crate) struct TransactionState {
     /// Indicates whether this transaction is read-only. All read-only transactions are
     /// created by the Snapshot API. Read-only transactions do not participate in conflict
