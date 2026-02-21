@@ -1729,6 +1729,10 @@ mod tests {
             panic!("txn1 did not pause at write-batch-post-commit");
         }
 
+        // add txn_dropped
+        let txn_dropped = db.begin(IsolationLevel::SerializableSnapshot).await.unwrap();
+        drop(txn_dropped);
+
         // 6. Create txn2 while txn1 is committed but the seqnum hasn't yet advanced.
         let txn2 = db.begin(IsolationLevel::SerializableSnapshot).await.unwrap();
         println!("txn2 id: {}", txn2.id());
