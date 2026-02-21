@@ -1684,6 +1684,79 @@ mod tests {
     use tokio::runtime::Runtime;
     use tracing::info;
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_txn_conflict_when_first_commit_paused_post_commit() {
+        let fp_registry = Arc::new(FailPointRegistry::new());
+        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let db = Db::builder("/tmp/test_txn_conflict_post_commit_pause", object_store)
+            .with_settings(test_db_options(0, 1024, None))
+            .with_fp_registry(fp_registry.clone())
+            .build()
+            .await
+            .unwrap();
+
+        // 1-2. Create txn1 and write k1=v1.
+        let txn1 = db.begin(IsolationLevel::SerializableSnapshot).await.unwrap();
+        txn1.put(b"k1", b"v1").unwrap();
+
+        // 3. Pause on write-batch-post-commit so txn1 blocks after conflict metadata is tracked.
+        fail_parallel::cfg(fp_registry.clone(), "write-batch-post-commit", "pause").unwrap();
+
+        let committed_before_txn1 = db.inner.oracle.last_committed_seq();
+        let txn1_start_seq = txn1.seqnum();
+
+        // 4. Commit txn1 in the background; it should pause at write-batch-post-commit.
+        let txn1_commit_task = tokio::spawn(async move { txn1.commit().await });
+
+        // 5. Wait until txn1 reaches post-commit pause:
+        // - txn1 is no longer active in txn_manager
+        // - last_committed_seq is still unchanged (not visible yet)
+        let pause_reached = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let txn1_removed_from_active = db.inner.txn_manager.min_active_seq().is_none();
+                let not_visible_yet = db.inner.oracle.last_committed_seq() == committed_before_txn1;
+                if txn1_removed_from_active && not_visible_yet {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+            .await
+            .is_ok();
+        if !pause_reached {
+            fail_parallel::cfg(fp_registry.clone(), "write-batch-post-commit", "off").unwrap();
+            let _ = txn1_commit_task.await;
+            panic!("txn1 did not pause at write-batch-post-commit");
+        }
+
+        // 6. Create txn2 while txn1 is committed but the seqnum hasn't yet advanced.
+        let txn2 = db.begin(IsolationLevel::SerializableSnapshot).await.unwrap();
+        println!("txn2 id: {}", txn2.id());
+
+        // 7. Unpause write-batch-post-commit, advance seqnum.
+        fail_parallel::cfg(fp_registry.clone(), "write-batch-post-commit", "off").unwrap();
+
+        // 8. Wait for txn1 to finish committing. txn1 is dropped when this finishes.
+        let _ = txn1_commit_task
+            .await
+            .expect("failed to join txn1 commit task")
+            .expect("txn1 commit should succeed");
+        assert_eq!(txn2.seqnum(), txn1_start_seq);
+
+        // 9-10. txn2 writes k1=v2 then attempts to commit (should conflict).
+        txn2.put(b"k1", b"v2").unwrap();
+        txn2.put(b"k2", b"v2").unwrap();
+        println!("txn2 attempting to commit with seqnum {}", txn2.seqnum());
+        let txn2_commit_err = txn2.commit().await.expect_err("txn2 should conflict");
+        println!("txn2 commit error: {:?}", txn2_commit_err);
+
+        // 11. txn1 committed; txn2 conflicted and did not commit.
+        assert_eq!(txn2_commit_err.kind(), crate::ErrorKind::Transaction);
+        assert_eq!(db.get(b"k1").await.unwrap(), Some(Bytes::from_static(b"v1")));
+
+        db.close().await.unwrap();
+    }
+
     #[tokio::test]
     async fn test_put_get_delete() {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());

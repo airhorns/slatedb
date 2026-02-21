@@ -516,6 +516,19 @@ impl DbTransaction {
     pub fn rollback(self) {
         // do nothing, trigger the Drop of the transaction
     }
+
+    /// Get the sequence number this transaction was started at. This is equivalent to
+    /// the snapshot sequence number for this transaction, which determines data visibility
+    /// for reads in this transaction.
+    pub fn seqnum(&self) -> u64 {
+        self.started_seq
+    }
+
+    /// Get the transaction ID. This is a unique identifier for this transaction, generated
+    /// by the transaction manager.
+    pub fn id(&self) -> Uuid {
+        self.txn_id
+    }
 }
 
 #[async_trait::async_trait]
