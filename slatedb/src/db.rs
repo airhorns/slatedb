@@ -60,6 +60,7 @@ use crate::manifest::Manifest;
 use crate::mem_table::WritableKVTable;
 use crate::mem_table_flush::{MemtableFlushMsg, MEMTABLE_FLUSHER_TASK_NAME};
 use crate::oracle::DbOracle;
+#[allow(unused_imports)] // Clippy seems to be ignoring the `as _`
 use crate::oracle::Oracle as _;
 use crate::paths::PathResolver;
 use crate::rand::DbRand;
