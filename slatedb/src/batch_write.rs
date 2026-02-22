@@ -197,8 +197,7 @@ impl DbInner {
             |_| { Err(SlateDBError::from(std::io::Error::other("oops"))) }
         );
 
-        // update the last_committed_seq, so the writes will be visible to the readers.
-        self.oracle.last_committed_seq.store(commit_seq);
+        // record the memtable sequence in the memtable's sequence tracker.
         self.record_memtable_sequence(commit_seq);
 
         // maybe freeze the memtable.
