@@ -19,7 +19,7 @@ bench = false
 [dependencies]
 # See .cargo/config.toml for details on why pyo3/extension-module is only
 # enabled on non-macOS and non-iOS targets.
-pyo3 = { workspace = true }
+pyo3 = { workspace = true, features = ["abi3-py310"] }
 pyo3-async-runtimes = { workspace = true, features = ["tokio-runtime"] }
 slatedb = { workspace = true, features = ["all", "gcp"] }
 once_cell = { workspace = true }
