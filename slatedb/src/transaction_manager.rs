@@ -434,7 +434,6 @@ impl TransactionManagerInner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::oracle::DbReaderOracle;
     use crate::rand::DbRand;
     use crate::utils::MonotonicSeq;
     use bytes::Bytes;
