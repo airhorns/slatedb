@@ -169,7 +169,7 @@ impl DbInner {
         // and flushed to the remote storage, WAL buffer manager will recycle these WAL entries.
         self.wal_buffer.track_last_applied_seq(commit_seq);
 
-        // insert a fail point for easier to test the case where the last_committed_seq is not updated.
+        // insert a fail point to make it easier to test the case where the last_committed_seq is not updated.
         // this is useful for testing the case where the reader is not able to see the writes.
         fail_point!(
             Arc::clone(&self.fp_registry),
@@ -188,9 +188,9 @@ impl DbInner {
                 .track_recent_committed_write_batch(&write_keys, commit_seq);
         }
 
-        // insert a fail point for easier to test the case where the transaction is committed but
-        // the last_committed_seq is not updated. this is useful for testing the case where the
-        // transaction is dropped and another transaction is created with the same sequence number.
+        // insert a fail point to make it easier to test the case where the transaction is committed but
+        // but remaining work hasn't been done. this is useful for testing that transaction commits and
+        // commited seqnums get updated in lock-step. See #1301 for details.
         fail_point!(
             Arc::clone(&self.fp_registry),
             "write-batch-post-commit",

@@ -6451,6 +6451,10 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_txn_conflict_when_first_commit_paused_post_commit() {
+        // This test reproduces the error in #1301. Befor the fix, the commited seqnum
+        // in the oracle was advanced outside the commit lock. This caused a race where
+        // another transaction could start, see the original seqnum (pre-commit), but not
+        // see conflicts. See #1301 for more details.
         let fp_registry = Arc::new(FailPointRegistry::new());
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let db = Db::builder("/tmp/test_txn_conflict_post_commit_pause", object_store)
