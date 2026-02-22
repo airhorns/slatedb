@@ -59,7 +59,7 @@ use crate::manifest::store::FenceableManifest;
 use crate::manifest::Manifest;
 use crate::mem_table::WritableKVTable;
 use crate::mem_table_flush::{MemtableFlushMsg, MEMTABLE_FLUSHER_TASK_NAME};
-use crate::oracle::{DbOracle, Oracle};
+use crate::oracle::{DbOracle, Oracle as _};
 use crate::paths::PathResolver;
 use crate::rand::DbRand;
 use crate::reader::Reader;
