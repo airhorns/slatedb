@@ -462,9 +462,7 @@ mod tests {
 
     #[test]
     fn test_new_transaction_uses_oracle_seq() {
-        let db_rand = Arc::new(DbRand::new(0));
-        let oracle = Arc::new(DbReaderOracle::new(MonotonicSeq::new(123)));
-        let txn_manager = TransactionManager::new(oracle, db_rand);
+        let txn_manager = create_transaction_manager();
 
         let (txn_id, seq) = txn_manager.new_transaction();
 
@@ -477,9 +475,7 @@ mod tests {
 
     #[test]
     fn test_new_snapshot_uses_optional_seq() {
-        let db_rand = Arc::new(DbRand::new(0));
-        let oracle = Arc::new(DbReaderOracle::new(MonotonicSeq::new(77)));
-        let txn_manager = TransactionManager::new(oracle, db_rand);
+        let txn_manager = create_transaction_manager();
 
         let (snapshot_id_from_oracle, seq_from_oracle) = txn_manager.new_snapshot(None);
         let (snapshot_id_explicit, explicit_seq) = txn_manager.new_snapshot(Some(42));
