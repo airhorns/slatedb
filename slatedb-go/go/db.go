@@ -36,8 +36,8 @@ type ScanResult struct {
 type WriteHandle struct {
 	// Seq is the sequence number assigned to this write.
 	Seq uint64
-	// CreateTs is the creation timestamp in milliseconds, if present.
-	CreateTs *int64
+	// CreateTs is the creation timestamp in milliseconds.
+	CreateTs int64
 }
 
 func resolveObjectStoreHandle(url *string, envFile *string) (*C.slatedb_object_store_t, error) {
@@ -105,13 +105,13 @@ func makeScanRange(start, end []byte) C.slatedb_range_t {
 
 	if len(start) > 0 {
 		rangeValue.start.kind = C.uint8_t(C.SLATEDB_BOUND_KIND_INCLUDED)
-		rangeValue.start.data = (*C.uint8_t)(unsafe.Pointer(&start[0]))
+		rangeValue.start.data = unsafe.Pointer(&start[0])
 		rangeValue.start.len = C.uintptr_t(len(start))
 	}
 
 	if len(end) > 0 {
 		rangeValue.end.kind = C.uint8_t(C.SLATEDB_BOUND_KIND_EXCLUDED)
-		rangeValue.end.data = (*C.uint8_t)(unsafe.Pointer(&end[0]))
+		rangeValue.end.data = unsafe.Pointer(&end[0])
 		rangeValue.end.len = C.uintptr_t(len(end))
 	}
 
@@ -252,10 +252,9 @@ func (db *DB) PutWithOptions(key, value []byte, putOpts *PutOptions, writeOpts *
 		return nil, err
 	}
 
-	wh := &WriteHandle{Seq: uint64(cHandle.seq)}
-	if bool(cHandle.create_ts_present) {
-		ts := int64(cHandle.create_ts)
-		wh.CreateTs = &ts
+	wh := &WriteHandle{
+		Seq:      uint64(cHandle.seq),
+		CreateTs: int64(cHandle.create_ts),
 	}
 	return wh, nil
 }
@@ -291,10 +290,9 @@ func (db *DB) DeleteWithOptions(key []byte, writeOpts *WriteOptions) (*WriteHand
 		return nil, err
 	}
 
-	wh := &WriteHandle{Seq: uint64(cHandle.seq)}
-	if bool(cHandle.create_ts_present) {
-		ts := int64(cHandle.create_ts)
-		wh.CreateTs = &ts
+	wh := &WriteHandle{
+		Seq:      uint64(cHandle.seq),
+		CreateTs: int64(cHandle.create_ts),
 	}
 	return wh, nil
 }
@@ -407,10 +405,9 @@ func (db *DB) WriteWithOptions(batch *WriteBatch, opts *WriteOptions) (*WriteHan
 		return nil, fmt.Errorf("failed to write batch: %w", err)
 	}
 
-	wh := &WriteHandle{Seq: uint64(cHandle.seq)}
-	if bool(cHandle.create_ts_present) {
-		ts := int64(cHandle.create_ts)
-		wh.CreateTs = &ts
+	wh := &WriteHandle{
+		Seq:      uint64(cHandle.seq),
+		CreateTs: int64(cHandle.create_ts),
 	}
 	return wh, nil
 }
