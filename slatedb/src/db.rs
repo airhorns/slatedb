@@ -182,7 +182,7 @@ impl DbInner {
             settings.flush_interval,
         ));
 
-        let txn_manager = Arc::new(TransactionManager::new(rand.clone(), oracle.clone()));
+        let txn_manager = Arc::new(TransactionManager::new(oracle.clone(), rand.clone()));
 
         let db_inner = Self {
             state,
@@ -6447,5 +6447,100 @@ mod tests {
             .unwrap();
         assert_eq!(handle.seqnum(), 3);
         assert_eq!(handle.create_ts(), Some(300));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_txn_conflict_when_first_commit_paused_post_commit() {
+        let fp_registry = Arc::new(FailPointRegistry::new());
+        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let db = Db::builder("/tmp/test_txn_conflict_post_commit_pause", object_store)
+            .with_settings(test_db_options(0, 1024, None))
+            .with_fp_registry(fp_registry.clone())
+            .build()
+            .await
+            .unwrap();
+
+        // 1-2. Create txn1 and write k1=v1.
+        let txn1 = db
+            .begin(IsolationLevel::SerializableSnapshot)
+            .await
+            .unwrap();
+        txn1.put(b"k1", b"v1").unwrap();
+
+        // 3. Pause on write-batch-post-commit so txn1 blocks after conflict metadata is tracked.
+        fail_parallel::cfg(fp_registry.clone(), "write-batch-post-commit", "pause").unwrap();
+
+        let txn1_start_seq = txn1.seqnum();
+
+        // 4. Commit txn1 in the background; it should pause at write-batch-post-commit.
+        let txn1_commit_task = tokio::spawn(async move { txn1.commit().await });
+
+        // 5. Wait until txn1 reaches post-commit pause:
+        // - txn1 is no longer active in txn_manager
+        let pause_reached = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let txn1_removed_from_active = db.inner.txn_manager.min_active_seq().is_none();
+                if txn1_removed_from_active {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .is_ok();
+        if !pause_reached {
+            fail_parallel::cfg(fp_registry.clone(), "write-batch-post-commit", "off").unwrap();
+            let _ = txn1_commit_task.await;
+            panic!("txn1 did not pause at write-batch-post-commit");
+        }
+
+        // 5.1. Add/drop txn to trigger a recycle that removes txn1 from recent commits.
+        let txn_dropped = db
+            .begin(IsolationLevel::SerializableSnapshot)
+            .await
+            .unwrap();
+        drop(txn_dropped);
+
+        // 6. Create txn2 after txn1 is committed but before batch_write is complete.
+        // The seqnum should advance transactionally with the commit, so txn2 should
+        // see txn1's post-write seqnum.
+        let txn2 = db
+            .begin(IsolationLevel::SerializableSnapshot)
+            .await
+            .unwrap();
+
+        // 6.1. txn2 should see k1=v1 since it started after txn1's commit, even though the
+        // batch write is not fully complete until after txn2 starts.
+        assert_eq!(
+            txn2.get(b"k1").await.unwrap(),
+            Some(Bytes::from_static(b"v1"))
+        );
+
+        // 7. Unpause write-batch-post-commit, advance seqnum.
+        fail_parallel::cfg(fp_registry.clone(), "write-batch-post-commit", "off").unwrap();
+
+        // 8. Wait for txn1 to finish committing. txn1 is dropped when this finishes.
+        let _ = txn1_commit_task
+            .await
+            .expect("failed to join txn1 commit task")
+            .expect("txn1 commit should succeed");
+        assert_eq!(
+            txn2.seqnum(),
+            txn1_start_seq + 1, // 1 row was written
+            "txn2 should see the commit seqnum after txn1's commit"
+        );
+
+        // 9-10. txn2 writes k1=v2 then attempts to commit (should not conflict).
+        txn2.put(b"k1", b"v2").unwrap();
+        txn2.put(b"k2", b"v2").unwrap();
+        assert!(txn2.commit().await.is_ok());
+
+        // 11. txn2 committed, so the db should show it.
+        assert_eq!(
+            db.get(b"k1").await.unwrap(),
+            Some(Bytes::from_static(b"v2"))
+        );
+
+        db.close().await.unwrap();
     }
 }
