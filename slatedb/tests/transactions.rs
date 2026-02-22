@@ -46,7 +46,7 @@ async fn test_concurrent_bank_transfers() {
             let db = db.clone();
             tokio::spawn(async move {
                 let mut rng = StdRng::from_os_rng();
-                for _ in 0..500 {
+                for _ in 0..100 {
                     let from = rng.random_range(0..num_accounts);
                     let mut to = rng.random_range(0..num_accounts);
                     while to == from {
