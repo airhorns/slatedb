@@ -233,15 +233,6 @@ impl TransactionManager {
         // remove the transaction from active_txns, and add it to recent_committed_txns
         let mut inner = self.inner.write();
 
-        // update the last_committed_seq, so the writes will be visible to the readers.
-        self.oracle.advance_committed_seq(committed_seq);
-
-        // if all transactions are readonly, then we don't need to track this recent committed
-        // txn, since it's impossible to have a conflict with a read-only transaction.
-        if !inner.has_non_readonly_active_txn() {
-            return;
-        }
-
         // remove the txn from active txns and append it to recent_committed_txns.
         if let Some(mut txn_state) = inner.active_txns.remove(txn_id) {
             // this should never happen, but having this check may let proptest easier to have.
@@ -251,6 +242,9 @@ impl TransactionManager {
             txn_state.mark_as_committed(committed_seq);
             inner.recent_committed_txns.push_back(txn_state);
         }
+
+        // update the last_committed_seq, so the writes will be visible to the readers.
+        self.oracle.advance_committed_seq(committed_seq);
     }
 
     /// Track a write batch for conflict detection. This is used for regular write operations
@@ -264,15 +258,6 @@ impl TransactionManager {
         // remove the transaction from active_txns, and add it to recent_committed_txns
         let mut inner = self.inner.write();
 
-        // update the last_committed_seq, so the writes will be visible to the readers.
-        self.oracle.advance_committed_seq(committed_seq);
-
-        // if all transactions are readonly, then we don't need to track this recent committed
-        // txn, since it's impossible to have a conflict with a read-only transaction.
-        if !inner.has_non_readonly_active_txn() {
-            return;
-        }
-
         inner.recent_committed_txns.push_back(TransactionState {
             read_only: false,
             started_seq: committed_seq,
@@ -281,6 +266,9 @@ impl TransactionManager {
             read_keys: HashSet::new(),
             read_ranges: Vec::new(),
         });
+
+        // update the last_committed_seq, so the writes will be visible to the readers.
+        self.oracle.advance_committed_seq(committed_seq);
     }
 
     /// The min started_seq of all active transactions, including snapshots. This value
@@ -311,6 +299,7 @@ impl TransactionManagerInner {
             .min()
     }
 
+    #[cfg(test)]
     fn has_non_readonly_active_txn(&self) -> bool {
         self.active_txns.values().any(|state| !state.read_only)
     }
