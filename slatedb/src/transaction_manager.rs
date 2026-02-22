@@ -1,5 +1,5 @@
 use crate::bytes_range::BytesRange;
-use crate::oracle::DbOracle;
+use crate::oracle::{DbOracle, Oracle};
 use crate::rand::DbRand;
 use crate::utils::IdGenerator;
 use bytes::Bytes;
