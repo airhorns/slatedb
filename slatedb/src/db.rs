@@ -25,8 +25,12 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use fail_parallel::FailPointRegistry;
+#[cfg(feature = "gcp")]
+use object_store::gcp::GoogleCloudStorageBuilder;
 use object_store::path::Path;
 use object_store::prefix::PrefixStore;
+#[cfg(feature = "gcp")]
+use object_store::{BackoffConfig, ClientOptions, RetryConfig};
 use object_store::{parse_url_opts, ObjectStore};
 
 use crate::compactor::COMPACTOR_TASK_NAME;
@@ -645,6 +649,54 @@ pub struct Db {
 }
 
 impl Db {
+    #[cfg(feature = "gcp")]
+    fn gcs_open_timeout() -> Duration {
+        std::env::var("SLATEDB_GCS_OPEN_TIMEOUT_SECONDS")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|seconds| *seconds > 0.0)
+            .map(Duration::from_secs_f64)
+            .unwrap_or_else(|| Duration::from_secs(5))
+    }
+
+    #[cfg(feature = "gcp")]
+    fn resolve_gcs_object_store(
+        url: &url::Url,
+    ) -> Result<Option<Arc<dyn ObjectStore>>, crate::Error> {
+        if url.scheme() != "gs" {
+            return Ok(None);
+        }
+
+        let timeout = Self::gcs_open_timeout();
+        let object_store = GoogleCloudStorageBuilder::from_env()
+            .with_url(url.as_str())
+            .with_client_options(
+                ClientOptions::new()
+                    .with_timeout(timeout)
+                    .with_connect_timeout(timeout),
+            )
+            .with_retry(RetryConfig {
+                backoff: BackoffConfig {
+                    init_backoff: Duration::from_millis(100),
+                    max_backoff: timeout,
+                    base: 2.0,
+                },
+                max_retries: 1,
+                retry_timeout: timeout,
+            })
+            .build()
+            .map_err(SlateDBError::from)?;
+
+        let object_store: Arc<dyn ObjectStore> = Arc::new(object_store);
+        let path = Path::from(url.path().trim_start_matches('/'));
+        let object_store = if path.as_ref().is_empty() {
+            object_store
+        } else {
+            Arc::new(PrefixStore::new(object_store, path))
+        };
+        Ok(Some(object_store))
+    }
+
     /// Open a new database with default options.
     ///
     /// ## Arguments
@@ -1554,6 +1606,10 @@ impl Db {
         let url = url
             .try_into()
             .map_err(|e| SlateDBError::InvalidObjectStoreURL(url.to_string(), e))?;
+        #[cfg(feature = "gcp")]
+        if let Some(object_store) = Self::resolve_gcs_object_store(&url)? {
+            return Ok(object_store);
+        }
         // Lowercase env keys because parse_url_opts only recognizes lower case option keys.
         let env_vars = std::env::vars().map(|(key, value)| (key.to_ascii_lowercase(), value));
         let (object_store, path) = parse_url_opts(&url, env_vars).map_err(SlateDBError::from)?;
