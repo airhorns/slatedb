@@ -202,14 +202,16 @@ impl FlatBufferManifestCodec {
             let sst_id = Compacted(man_sst.id().ulid());
 
             let sst_info = FlatBufferSsTableInfoCodec::sst_info(&man_sst.info());
-            // Backport of upstream #1341. Manifests written before this backport
-            // (or by upstream <0.12) omit format_version. This fork only ever
-            // wrote V2 SSTs, so default absent -> SST_FORMAT_VERSION_LATEST (V2),
-            // NOT upstream's ORIGINAL/V1 default which mis-dispatches the V1
-            // block iterator onto V2 blocks.
-            let format_version = man_sst
-                .format_version()
-                .unwrap_or(SST_FORMAT_VERSION_LATEST);
+            // This fork only ever writes V2 SSTs, so the block-format version is
+            // always SST_FORMAT_VERSION_LATEST (V2). We deliberately IGNORE any
+            // persisted manifest format_version: it is either absent (fork-written
+            // manifest predating this backport) or, worse, a WRONG value written by
+            // upstream slatedb v0.14 -- which, on opening a fork namespace as a
+            // writer, defaulted our V2 SSTs to V1 and persisted format_version=1
+            // into the manifest. Trusting that persisted 1 would re-emit 1 and keep
+            // upstream mis-dispatching the V1 iterator onto V2 blocks. The SST
+            // footer is the real authority and is always V2 here, so we use LATEST.
+            let format_version = SST_FORMAT_VERSION_LATEST;
             let l0_sst = SsTableHandle::new_compacted(
                 sst_id,
                 format_version,
@@ -224,9 +226,9 @@ impl FlatBufferManifestCodec {
             for manifest_sst in manifest_sr.ssts().iter() {
                 let id = Compacted(manifest_sst.id().ulid());
                 let info = FlatBufferSsTableInfoCodec::sst_info(&manifest_sst.info());
-                let format_version = manifest_sst
-                    .format_version()
-                    .unwrap_or(SST_FORMAT_VERSION_LATEST);
+                // Ignore any persisted format_version (may be upstream v0.14's
+                // wrong "1"); this fork's SSTs are always V2. See the l0 loop above.
+                let format_version = SST_FORMAT_VERSION_LATEST;
                 ssts.push(SsTableHandle::new_compacted(
                     id,
                     format_version,
@@ -395,9 +397,9 @@ impl FlatBufferCompactionsCodec {
         let visible_range = compacted_sst
             .visible_range()
             .map(FlatBufferManifestCodec::decode_bytes_range);
-        let format_version = compacted_sst
-            .format_version()
-            .unwrap_or(SST_FORMAT_VERSION_LATEST);
+        // Ignore any persisted format_version (may be upstream v0.14's wrong "1");
+        // this fork's SSTs are always V2. See `manifest()` l0 loop for the rationale.
+        let format_version = SST_FORMAT_VERSION_LATEST;
         SsTableHandle::new_compacted(id, format_version, info, visible_range)
     }
 
