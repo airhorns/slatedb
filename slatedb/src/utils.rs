@@ -810,7 +810,7 @@ mod tests {
             index_len: 1,
             ..Default::default()
         };
-        SsTableHandle::new_compacted(SsTableId::Compacted(Ulid::new()), info, None)
+        SsTableHandle::new_compacted(SsTableId::Compacted(Ulid::new()), crate::format::sst::SST_FORMAT_VERSION_LATEST, info, None)
     }
 
     #[test]

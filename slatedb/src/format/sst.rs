@@ -380,6 +380,10 @@ impl<'a, 'b> EncodedSsTableFooterBuilder<'a, 'b> {
 }
 
 pub(crate) struct EncodedSsTable {
+    /// The SST block-format version this SST was serialized with. Threaded into
+    /// the resulting `SsTableHandle` so it can be persisted in the manifest
+    /// (backport of upstream #1341).
+    pub(crate) format_version: u16,
     pub(crate) info: SsTableInfo,
     pub(crate) index: SsTableIndexOwned,
     pub(crate) filter: Option<Arc<BloomFilter>>,

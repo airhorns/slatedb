@@ -27,6 +27,14 @@ pub struct SsTableHandle {
     /// The unique identifier for this SSTable. The table can be either a WAL SST or a compacted SST.
     pub id: SsTableId,
 
+    /// The SST block-format version this SSTable was serialized with (see
+    /// `SST_FORMAT_VERSION` / `SST_FORMAT_VERSION_V2`). This fork determines the
+    /// version authoritatively from the SST footer at read time, but it also
+    /// persists it into the manifest (backport of upstream #1341) so that
+    /// upstream slatedb, which dispatches the block iterator from the manifest,
+    /// reads this fork's V2 SSTs correctly instead of defaulting to V1.
+    pub(crate) format_version: u16,
+
     /// Metadata information about this SSTable.
     pub info: SsTableInfo,
 
@@ -50,7 +58,7 @@ impl Debug for SsTableHandle {
 }
 
 impl SsTableHandle {
-    pub(crate) fn new(id: SsTableId, info: SsTableInfo) -> Self {
+    pub(crate) fn new(id: SsTableId, format_version: u16, info: SsTableInfo) -> Self {
         let effective_range = match info.first_entry.clone() {
             Some(physical_first_entry) => {
                 BytesRange::new(Included(physical_first_entry), Unbounded)
@@ -60,6 +68,7 @@ impl SsTableHandle {
 
         SsTableHandle {
             id,
+            format_version,
             info,
             visible_range: None,
             effective_range,
@@ -68,6 +77,7 @@ impl SsTableHandle {
 
     pub(crate) fn new_compacted(
         id: SsTableId,
+        format_version: u16,
         info: SsTableInfo,
         visible_range: Option<BytesRange>,
     ) -> Self {
@@ -90,6 +100,7 @@ impl SsTableHandle {
         }
         SsTableHandle {
             id,
+            format_version,
             info,
             visible_range,
             effective_range,
@@ -97,7 +108,12 @@ impl SsTableHandle {
     }
 
     pub(crate) fn with_visible_range(&self, visible_range: BytesRange) -> Self {
-        Self::new_compacted(self.id, self.info.clone(), Some(visible_range))
+        Self::new_compacted(
+            self.id,
+            self.format_version,
+            self.info.clone(),
+            Some(visible_range),
+        )
     }
 
     /// The range of keys that are visible to the user.
@@ -737,7 +753,7 @@ mod tests {
                 .expect("db in error state");
             let imm = db_state.state.imm_memtable.back().unwrap().clone();
             let handle =
-                SsTableHandle::new(SsTableId::Compacted(ulid::Ulid::new()), dummy_info.clone());
+                SsTableHandle::new(SsTableId::Compacted(ulid::Ulid::new()), crate::format::sst::SST_FORMAT_VERSION_LATEST, dummy_info.clone());
             db_state.modify(|modifier| {
                 modifier.state.manifest.value.core.l0.push_front(handle);
                 modifier.state.manifest.value.core.replay_after_wal_id =
@@ -799,7 +815,7 @@ mod tests {
     fn create_compacted_sst_handle(first_entry: Option<Bytes>) -> SsTableHandle {
         let sst_info = create_sst_info(first_entry);
         let sst_id = SsTableId::Compacted(ulid::Ulid::new());
-        SsTableHandle::new(sst_id, sst_info)
+        SsTableHandle::new(sst_id, crate::format::sst::SST_FORMAT_VERSION_LATEST, sst_info)
     }
 
     fn create_sst_info(first_entry: Option<Bytes>) -> SsTableInfo {

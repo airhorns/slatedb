@@ -589,6 +589,7 @@ mod tests {
         let output_ssts = vec![
             SsTableHandle::new_compacted(
                 SsTableId::Compacted(Ulid::from_parts(10, 0)),
+                crate::format::sst::SST_FORMAT_VERSION_LATEST,
                 SsTableInfo {
                     first_entry: Some(Bytes::copy_from_slice(b"a")),
                     ..Default::default()
@@ -597,6 +598,7 @@ mod tests {
             ),
             SsTableHandle::new_compacted(
                 SsTableId::Compacted(Ulid::from_parts(11, 0)),
+                crate::format::sst::SST_FORMAT_VERSION_LATEST,
                 SsTableInfo {
                     first_entry: Some(Bytes::copy_from_slice(b"m")),
                     ..Default::default()

@@ -16,6 +16,7 @@ use crate::compactor_state::{
 };
 use crate::db_state::{self, SsTableInfo, SsTableInfoCodec};
 use crate::db_state::{ManifestCore, SsTableHandle};
+use crate::format::sst::SST_FORMAT_VERSION_LATEST;
 
 #[path = "./generated/root_generated.rs"]
 #[allow(warnings, clippy::disallowed_macros, clippy::disallowed_types, clippy::disallowed_methods, unreachable_pub)]
@@ -201,8 +202,17 @@ impl FlatBufferManifestCodec {
             let sst_id = Compacted(man_sst.id().ulid());
 
             let sst_info = FlatBufferSsTableInfoCodec::sst_info(&man_sst.info());
+            // Backport of upstream #1341. Manifests written before this backport
+            // (or by upstream <0.12) omit format_version. This fork only ever
+            // wrote V2 SSTs, so default absent -> SST_FORMAT_VERSION_LATEST (V2),
+            // NOT upstream's ORIGINAL/V1 default which mis-dispatches the V1
+            // block iterator onto V2 blocks.
+            let format_version = man_sst
+                .format_version()
+                .unwrap_or(SST_FORMAT_VERSION_LATEST);
             let l0_sst = SsTableHandle::new_compacted(
                 sst_id,
+                format_version,
                 sst_info,
                 man_sst.visible_range().map(Self::decode_bytes_range),
             );
@@ -214,8 +224,12 @@ impl FlatBufferManifestCodec {
             for manifest_sst in manifest_sr.ssts().iter() {
                 let id = Compacted(manifest_sst.id().ulid());
                 let info = FlatBufferSsTableInfoCodec::sst_info(&manifest_sst.info());
+                let format_version = manifest_sst
+                    .format_version()
+                    .unwrap_or(SST_FORMAT_VERSION_LATEST);
                 ssts.push(SsTableHandle::new_compacted(
                     id,
+                    format_version,
                     info,
                     manifest_sst.visible_range().map(Self::decode_bytes_range),
                 ));
@@ -381,7 +395,10 @@ impl FlatBufferCompactionsCodec {
         let visible_range = compacted_sst
             .visible_range()
             .map(FlatBufferManifestCodec::decode_bytes_range);
-        SsTableHandle::new_compacted(id, info, visible_range)
+        let format_version = compacted_sst
+            .format_version()
+            .unwrap_or(SST_FORMAT_VERSION_LATEST);
+        SsTableHandle::new_compacted(id, format_version, info, visible_range)
     }
 
     pub(crate) fn create_from_compactions(compactions: &CompactorCompactions) -> Bytes {
@@ -477,6 +494,10 @@ impl<'b> DbFlatBufferBuilder<'b> {
                 id: Some(compacted_sst_id),
                 info: Some(compacted_sst_info),
                 visible_range,
+                // Persist the SST's block-format version (backport of upstream
+                // #1341) so upstream slatedb dispatches the correct block
+                // iterator instead of defaulting absent -> V1.
+                format_version: Some(handle.format_version),
             },
         )
     }
@@ -881,6 +902,7 @@ mod tests {
         fn new_sst_handle(first_entry: &[u8], visible_range: Option<BytesRange>) -> SsTableHandle {
             SsTableHandle::new_compacted(
                 SsTableId::Compacted(ulid::Ulid::new()),
+                crate::format::sst::SST_FORMAT_VERSION_LATEST,
                 SsTableInfo {
                     first_entry: Some(Bytes::copy_from_slice(first_entry)),
                     ..Default::default()
@@ -1048,6 +1070,7 @@ mod tests {
         fn new_output_sst(first_key: &[u8], visible_range: Option<BytesRange>) -> SsTableHandle {
             SsTableHandle::new_compacted(
                 SsTableId::Compacted(ulid::Ulid::new()),
+                crate::format::sst::SST_FORMAT_VERSION_LATEST,
                 SsTableInfo {
                     first_entry: Some(Bytes::copy_from_slice(first_key)),
                     ..Default::default()

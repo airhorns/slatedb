@@ -47,6 +47,11 @@ table CompactedSsTable {
     id: Ulid (required);
     info: SsTableInfo (required);
     visible_range: BytesRange;
+    // Backport of upstream #1341: the SST block-format version, so upstream
+    // slatedb (>=0.12) can dispatch the correct block iterator from the manifest
+    // instead of defaulting absent -> V1. This fork writes V2 SSTs, so a manifest
+    // that omits this field makes upstream read V2 blocks with the V1 iterator.
+    format_version: uint16 = null;
 }
 
 table SortedRun {

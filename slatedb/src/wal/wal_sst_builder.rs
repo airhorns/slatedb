@@ -244,13 +244,14 @@ impl EncodedWalSsTableBuilder {
     pub(crate) async fn build(mut self) -> Result<EncodedSsTable, SlateDBError> {
         self.finish_block().await?;
 
+        let format_version = SST_FORMAT_VERSION_LATEST;
         let mut footer_builder = EncodedSsTableFooterBuilder::new(
             self.data_size,
             self.sst_first_seq,
             &*self.sst_codec,
             self.index_builder,
             self.block_meta,
-            SST_FORMAT_VERSION_LATEST,
+            format_version,
         );
         if let Some(codec) = self.compression_codec {
             footer_builder = footer_builder.with_compression_codec(codec);
@@ -261,6 +262,7 @@ impl EncodedWalSsTableBuilder {
         let footer = footer_builder.build().await?;
 
         Ok(EncodedSsTable {
+            format_version,
             info: footer.info,
             index: footer.index,
             filter: None,

@@ -545,6 +545,7 @@ mod tests {
         for entry in &manifest.l0 {
             core.l0.push_back(SsTableHandle::new_compacted(
                 sst_id_fn(entry.sst_alias),
+                crate::format::sst::SST_FORMAT_VERSION_LATEST,
                 SsTableInfo {
                     first_entry: Some(entry.first_entry.clone()),
                     ..SsTableInfo::default()
@@ -560,6 +561,7 @@ mod tests {
                     .map(|entry| {
                         SsTableHandle::new_compacted(
                             sst_id_fn(entry.sst_alias),
+                            crate::format::sst::SST_FORMAT_VERSION_LATEST,
                             SsTableInfo {
                                 first_entry: Some(entry.first_entry.clone()),
                                 ..SsTableInfo::default()

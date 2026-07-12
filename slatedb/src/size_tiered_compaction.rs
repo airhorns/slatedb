@@ -851,7 +851,7 @@ mod tests {
             filter_len: 0,
             compression_codec: None,
         };
-        SsTableHandle::new(SsTableId::Compacted(ulid::Ulid::new()), info)
+        SsTableHandle::new(SsTableId::Compacted(ulid::Ulid::new()), crate::format::sst::SST_FORMAT_VERSION_LATEST, info)
     }
 
     fn create_sr2(id: u32, size: u64) -> SortedRun {
